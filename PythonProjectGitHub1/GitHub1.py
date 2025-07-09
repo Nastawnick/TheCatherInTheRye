@@ -6,14 +6,13 @@ from tkinter import messagebox
 VBS_SCRIPT = "sleep.vbs"
 
 def create_vbs_script():
-    if not os.path.exists(VBS_SCRIPT):
-        vbs_content = '''minutes = WScript.Arguments.Item(0)
-seconds = minutes * 60
+    vbs_content = '''seconds = WScript.Arguments.Item(0)
 
-Set WshShell = CreateObject("WScript.Shell")
-WshShell.Run "cmd /c timeout /t " & seconds & " /nobreak && rundll32.exe powrprof.dll,SetSuspendState 0,1,0", 0, False'''
-        with open(VBS_SCRIPT, 'w') as f:
-            f.write(vbs_content)
+    Set WshShell = CreateObject("WScript.Shell")
+    WshShell.Run "cmd /c timeout /t " & seconds & " /nobreak && rundll32.exe powrprof.dll,SetSuspendState 0,1,0", 0, False'''
+    with open(VBS_SCRIPT, 'w') as f:
+        f.write(vbs_content)
+
 
 def start_timer():
     try:
