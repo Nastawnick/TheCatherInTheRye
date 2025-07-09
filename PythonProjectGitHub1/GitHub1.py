@@ -15,7 +15,7 @@ class SleepTimer:
         self.cancel_event.clear()
         self.timer_thread = threading.Thread(
             target=self.run_timer,
-            args=(seconds),
+            args=(seconds, ),
             daemon=True
         )
         self.timer_thread.start()
@@ -25,7 +25,7 @@ class SleepTimer:
 
     def run_timer(self, seconds):
         for i in range(seconds):
-            if self.cancel_events.is_set():
+            if self.cancel_event.is_set():
                 return
             time.sleep(1)
         if not self.cancel_event.is_set():
