@@ -10,9 +10,15 @@ class SleepTimer:
     def __init__(self):
         self.cancel_event = threading.Event()
         self.timer_thread = None
+        self.remaining_time = 0
+        self.total_time = 0
+        self.update_callback = None
 
-    def start(self, seconds):
+    def start(self, seconds, callback=None):
         self.cancel_event.clear()
+        self.total_time = seconds
+        self.remaining_time = seconds
+        self.update_callback = callback
         self.timer_thread = threading.Thread(
             target=self.run_timer,
             args=(seconds,),
@@ -22,12 +28,18 @@ class SleepTimer:
 
     def cancel(self):
         self.cancel_event.set()
+        self.remaining_time = 0
+        if self.update_callback:
+            self.update_callback(0)
 
     def run_timer(self, seconds):
         for i in range(seconds):
             if self.cancel_event.is_set():
                 return
             time.sleep(1)
+            self.remaining_time = seconds - i - 1
+            if self.update_callback:
+                self.update_callback(self.remaining_time)
         if not self.cancel_event.is_set():
             ctypes.windll.powrprof.SetSuspendState(0, 1, 0)
 
@@ -38,17 +50,34 @@ class SlidingMenu:
         self.menu_shown = False
         self.menu_width = 200
         self.animation_speed = 15
+        self.sensor = ""
 
         # Создаем меню (изначально скрыто за левым краем)
         self.menu = CTkFrame(
             master=parent,
             width=self.menu_width,
             height=parent.winfo_height(),
-            corner_radius=0,
-            fg_color="#f0f0f0"
+            corner_radius=3,
+            fg_color="#D3D3D3"
         )
         self.menu.place(x=-self.menu_width, y=0, relheight=1)
         self.menu.lift()  # Поднимаем меню на передний план
+
+        # Элементы для отображения таймера
+        self.timer_label = CTkLabel(
+            self.menu,
+            text="Таймер не активен",
+            text_color="#333333",
+            font=("Arial", 12),
+            anchor="w"
+        )
+        self.time_left_label = CTkLabel(
+            self.menu,
+            text="00:00:00",
+            text_color="#333333",
+            font=("Arial", 14, "bold"),
+            anchor="w"
+        )
 
         # Добавляем содержимое меню
         self._setup_menu_content()
@@ -56,17 +85,26 @@ class SlidingMenu:
         # Привязываем события мыши
         parent.bind("<Enter>", self._check_mouse_position)
         parent.bind("<Motion>", self._check_mouse_position)
-        parent.bind("<Leave>", lambda e: self.hide_menu() if self.menu_shown else None)
+        parent.bind("<Leave>", self._check_mouse_position)
 
     def _setup_menu_content(self):
         # Заголовок меню
         CTkLabel(
             self.menu,
-            text="Меню",
+            text="Меню таймера",
             text_color="#333333",
             font=("Arial", 14, "bold"),
             anchor="w"
-        ).pack(fill="x", padx=10, pady=(15, 10))
+        ).pack(fill="x", padx=10, pady=(15, 5))
+
+        # Разделитель
+        CTkFrame(self.menu, height=2, fg_color="#cccccc").pack(fill="x", pady=5)
+
+        # Метка состояния таймера
+        self.timer_label.pack(fill="x", padx=10, pady=(5, 0))
+
+        # Метка оставшегося времени
+        self.time_left_label.pack(fill="x", padx=10, pady=(0, 10))
 
         # Разделитель
         CTkFrame(self.menu, height=2, fg_color="#cccccc").pack(fill="x", pady=5)
@@ -89,13 +127,26 @@ class SlidingMenu:
                 anchor="w",
                 corner_radius=0
             )
-            btn.pack(fill="x", padx=0, pady=0)
+            #btn.pack(fill="x", padx=0, pady=0)
             CTkFrame(self.menu, height=1, fg_color="#e0e0e0").pack(fill="x")
 
+    def update_timer_display(self, remaining_seconds):
+        if remaining_seconds > 0:
+            self.timer_label.configure(text="До выключения:")
+            # Форматируем время в ЧЧ:ММ:СС
+            hours, remainder = divmod(remaining_seconds, 3600)
+            minutes, seconds = divmod(remainder, 60)
+            time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+            self.time_left_label.configure(text=time_str)
+        else:
+            self.timer_label.configure(text="Таймер не активен")
+            self.time_left_label.configure(text="00:00:00")
+
     def _check_mouse_position(self, event):
-        # Показываем меню только если курсор в левых 10 пикселях окна
         if event.x < 10 and not self.menu_shown:
             self.show_menu()
+        elif event.x == self.menu_width and self.menu_shown:
+            self.hide_menu()
         elif event.x > self.menu_width and self.menu_shown:
             self.hide_menu()
 
@@ -103,7 +154,7 @@ class SlidingMenu:
         if not self.menu_shown:
             self.menu_shown = True
             self._animate_menu(0)
-            self.menu.lift()  # Поднимаем меню на передний план при показе
+            self.menu.lift()
 
     def hide_menu(self):
         if self.menu_shown:
@@ -132,11 +183,11 @@ def start_timer():
             messagebox.showerror("Ошибка", "Введите положительное число секунд")
             return
 
-        sleep_timer.start(seconds)
+        sleep_timer.start(seconds, sliding_menu.update_timer_display)
         button_cancel.configure(state="normal")
         messagebox.showinfo("Успех", f"Таймер установлен на {seconds} секунд\nДля отмены нажмите кнопку 'Отменить'")
     except ValueError:
-        messagebox.showerror()
+        messagebox.showerror("Ошибка", "Введите корректное число секунд")
 
 
 def stop_timer():
@@ -158,7 +209,7 @@ main_frame.pack(pady=20, padx=20, fill="both", expand=True)
 label = CTkLabel(master=main_frame, text="Укажите время до сна (в секундах):")
 label.pack()
 
-time_options = ["10", "30", "60", "120", "300", "600", "1800"]
+time_options = ["300", "600", "900", "1800", "3600", "7200", "14400"]
 time_combobox = CTkComboBox(
     master=main_frame,
     values=time_options,
@@ -167,7 +218,7 @@ time_combobox = CTkComboBox(
     height=30
 )
 time_combobox.pack(pady=5)
-time_combobox.set("600")
+time_combobox.set("1800")  # 30 минут по умолчанию
 
 buttons_frame = CTkFrame(main_frame, fg_color="transparent")
 buttons_frame.pack(pady=15)

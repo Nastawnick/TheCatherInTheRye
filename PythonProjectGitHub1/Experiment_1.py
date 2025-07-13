@@ -6,3 +6,10 @@ class SleepTimer:
 
 a = SleepTimer()
 print(a.cancel_event.set())
+
+a = ''
+def f():
+    a = 1
+
+f()
+print(a)
