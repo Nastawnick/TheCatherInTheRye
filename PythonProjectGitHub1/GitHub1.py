@@ -15,10 +15,15 @@ class SleepTimer:
         self.update_callback = None
 
     def start(self, seconds, callback=None):
+        # Отменяем предыдущий таймер
+        self.cancel()
+
         self.cancel_event.clear()
         self.total_time = seconds
         self.remaining_time = seconds
         self.update_callback = callback
+        self.active = True
+
         self.timer_thread = threading.Thread(
             target=self.run_timer,
             args=(seconds,),
@@ -28,19 +33,23 @@ class SleepTimer:
 
     def cancel(self):
         self.cancel_event.set()
+        self.active = False
         self.remaining_time = 0
         if self.update_callback:
-            self.update_callback(0)
+            app.after(0, lambda: self.update_callback(0))  # Обновление в основном потоке
 
     def run_timer(self, seconds):
         for i in range(seconds):
             if self.cancel_event.is_set():
                 return
             time.sleep(1)
+            if not self.active:  # Проверка на активность
+                return
             self.remaining_time = seconds - i - 1
             if self.update_callback:
                 self.update_callback(self.remaining_time)
-        if not self.cancel_event.is_set():
+
+        if self.active and not self.cancel_event.is_set():  # Дополнительная проверка
             ctypes.windll.powrprof.SetSuspendState(0, 1, 0)
 
 def format_time(seconds):
@@ -145,7 +154,6 @@ class SlidingMenu:
     def update_timer_display(self, remaining_seconds):
         if remaining_seconds > 0:
             self.timer_label.configure(text="До выключения:")
-            # Форматируем время в ЧЧ:ММ:СС
             hours, remainder = divmod(remaining_seconds, 3600)
             minutes, seconds = divmod(remainder, 60)
             self.time_left_label.configure(text=f"{hours:02d}:{minutes:02d}:{seconds:02d}")
@@ -190,10 +198,12 @@ class SlidingMenu:
 
 sleep_timer = SleepTimer()
 
-
 def start_timer():
     try:
         time_str = time_combobox.get()
+        print(sliding_menu.time_left_label._text)
+        stop_timer(1)
+        print("stop_timer")
 
         if "секунд" in time_str:
             seconds = int(time_str.split()[0])
@@ -217,11 +227,20 @@ def start_timer():
         messagebox.showerror("Ошибка", "Введите корректное значение")
 
 
-def stop_timer():
-    sleep_timer.cancel()
-    sliding_menu.reset_timer_display()  # Сбрасываем отображение
-    button_cancel.configure(state="disabled")
-    messagebox.showinfo("Отмена", "Таймер отменен!")
+def stop_timer(a=0): #если сейчас эту функция вызывает start_timer, то True, иначе - False
+    if a == 0:
+        print("FALSE")
+        sleep_timer.cancel()
+        sliding_menu.reset_timer_display()  # Сбрасываем отображение
+        button_cancel.configure(state="disabled")
+        messagebox.showinfo("Отмена", "Таймер отменен!")
+    if a == 1:
+        print(sliding_menu.time_left_label._text)
+        print("TRUE")
+        sleep_timer.cancel()
+        sliding_menu.reset_timer_display()  # Сбрасываем отображение
+        print(sliding_menu.time_left_label._text)
+        # time.sleep(1)
 
 
 app = CTk()
