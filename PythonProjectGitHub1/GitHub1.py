@@ -9,16 +9,21 @@ from customtkinter import CTk, CTkButton, CTkComboBox, CTkLabel, CTkFrame
 class SleepTimer:
     def __init__(self):
         self.cancel_event = threading.Event()
+        self.lock = threading.Lock()
         self.timer_thread = None
         self.remaining_time = 0
         self.total_time = 0
         self.update_callback = None
+        self.active = False
+        self.current_timer_id = 0
 
     def start(self, seconds, callback=None):
-        # Отменяем предыдущий таймер
         self.cancel()
-
         self.cancel_event.clear()
+
+        self.current_timer_id += 1
+        timer_id = self.current_timer_id
+
         self.total_time = seconds
         self.remaining_time = seconds
         self.update_callback = callback
@@ -26,34 +31,47 @@ class SleepTimer:
 
         self.timer_thread = threading.Thread(
             target=self.run_timer,
-            args=(seconds,),
+            args=(seconds, timer_id),
             daemon=True
         )
         self.timer_thread.start()
 
     def cancel(self):
-        self.cancel_event.set()
-        self.active = False
-        self.remaining_time = 0
-        if self.update_callback:
-            app.after(0, lambda: self.update_callback(0))  # Обновление в основном потоке
-
-    def run_timer(self, seconds):
-        for i in range(seconds):
-            if self.cancel_event.is_set():
-                return
-            time.sleep(1)
-            if not self.active:  # Проверка на активность
-                return
-            self.remaining_time = seconds - i - 1
+        with self.lock:
+            self.cancel_event.set()
+            self.active = False
+            self.remaining_time = 0
             if self.update_callback:
-                self.update_callback(self.remaining_time)
+                app.after(0, lambda: self.update_callback(0))
 
-        if self.active and not self.cancel_event.is_set():  # Дополнительная проверка
+    def run_timer(self, seconds, timer_id):
+        for i in range(seconds):
+            if not self.should_continue(timer_id) or not self.active:
+                return
+
+            remaining = int(seconds - i - 1)
+            self._update_remaining_time(remaining)
+            time.sleep(1)
+
+        if self.should_continue(timer_id):
+            self._trigger_sleep()
+
+    def should_continue(self, timer_id):
+        return timer_id == self.current_timer_id
+
+    def _update_remaining_time(self, remaining):
+        with self.lock:
+            if remaining != self.remaining_time:
+                self.remaining_time = remaining
+                if self.update_callback:
+                    app.after(0, lambda: self.update_callback(remaining))
+
+    def _trigger_sleep(self):
+        if self.should_continue(self.current_timer_id):
             ctypes.windll.powrprof.SetSuspendState(0, 1, 0)
 
+
 def format_time(seconds):
-    """Форматирует время в удобочитаемый формат"""
     hours, remainder = divmod(seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
 
@@ -65,15 +83,14 @@ def format_time(seconds):
         return f"{minutes} мин"
     return f"{seconds} сек"
 
+
 class SlidingMenu:
     def __init__(self, parent):
         self.parent = parent
         self.menu_shown = False
         self.menu_width = 200
         self.animation_speed = 15
-        self.sensor = ""
 
-        # Создаем меню (изначально скрыто за левым краем)
         self.menu = CTkFrame(
             master=parent,
             width=self.menu_width,
@@ -81,10 +98,9 @@ class SlidingMenu:
             corner_radius=3,
             fg_color="#D3D3D3"
         )
+        self.menu.lift()
         self.menu.place(x=-self.menu_width, y=0, relheight=1)
-        self.menu.lift()  # Поднимаем меню на передний план
 
-        # Элементы для отображения таймера
         self.timer_label = CTkLabel(
             self.menu,
             text="Таймер не активен",
@@ -99,17 +115,13 @@ class SlidingMenu:
             font=("Arial", 14, "bold"),
             anchor="w"
         )
-
-        # Добавляем содержимое меню
         self._setup_menu_content()
 
-        # Привязываем события мыши
         parent.bind("<Enter>", self._check_mouse_position)
         parent.bind("<Motion>", self._check_mouse_position)
         parent.bind("<Leave>", self._check_mouse_position)
 
     def _setup_menu_content(self):
-        # Заголовок меню
         CTkLabel(
             self.menu,
             text="Меню таймера",
@@ -118,19 +130,13 @@ class SlidingMenu:
             anchor="w"
         ).pack(fill="x", padx=10, pady=(15, 5))
 
-        # Разделитель
         CTkFrame(self.menu, height=2, fg_color="#cccccc").pack(fill="x", pady=5)
 
-        # Метка состояния таймера
         self.timer_label.pack(fill="x", padx=10, pady=(5, 0))
-
-        # Метка оставшегося времени
         self.time_left_label.pack(fill="x", padx=10, pady=(0, 10))
 
-        # Разделитель
         CTkFrame(self.menu, height=2, fg_color="#cccccc").pack(fill="x", pady=5)
 
-        # Пункты меню
         menu_items = [
             ("О программе", lambda: messagebox.showinfo("О программе", "Таймер сна v1.0")),
             ("Помощь", lambda: messagebox.showinfo("Помощь", "Выберите время и нажмите 'Запустить таймер'")),
@@ -148,7 +154,6 @@ class SlidingMenu:
                 anchor="w",
                 corner_radius=0
             )
-            #btn.pack(fill="x", padx=0, pady=0)
             CTkFrame(self.menu, height=1, fg_color="#e0e0e0").pack(fill="x")
 
     def update_timer_display(self, remaining_seconds):
@@ -163,7 +168,6 @@ class SlidingMenu:
     def reset_timer_display(self):
         self.timer_label.configure(text="Таймер не активен")
         self.time_left_label.configure(text="00:00:00")
-
 
     def _check_mouse_position(self, event):
         if event.x < 10 and not self.menu_shown:
@@ -198,13 +202,11 @@ class SlidingMenu:
 
 sleep_timer = SleepTimer()
 
+
 def start_timer():
     try:
+        stop_timer(True)
         time_str = time_combobox.get()
-        print(sliding_menu.time_left_label._text)
-        stop_timer(1)
-        print("stop_timer")
-
         if "секунд" in time_str:
             seconds = int(time_str.split()[0])
         elif "минут" in time_str:
@@ -219,6 +221,7 @@ def start_timer():
             messagebox.showerror("Ошибка", "Введите положительное время")
             return
 
+        sleep_timer.cancel()
         display_time = format_time(seconds)
         sleep_timer.start(seconds, sliding_menu.update_timer_display)
         button_cancel.configure(state="normal")
@@ -227,27 +230,18 @@ def start_timer():
         messagebox.showerror("Ошибка", "Введите корректное значение")
 
 
-def stop_timer(a=0): #если сейчас эту функция вызывает start_timer, то True, иначе - False
-    if a == 0:
-        print("FALSE")
-        sleep_timer.cancel()
-        sliding_menu.reset_timer_display()  # Сбрасываем отображение
-        button_cancel.configure(state="disabled")
+def stop_timer(by_start_timer=False):
+    sleep_timer.cancel()
+    sliding_menu.reset_timer_display()
+    button_cancel.configure(state="disabled")
+    if not by_start_timer:
         messagebox.showinfo("Отмена", "Таймер отменен!")
-    if a == 1:
-        print(sliding_menu.time_left_label._text)
-        print("TRUE")
-        sleep_timer.cancel()
-        sliding_menu.reset_timer_display()  # Сбрасываем отображение
-        print(sliding_menu.time_left_label._text)
-        # time.sleep(1)
 
 
 app = CTk()
 app.title("Таймер сна")
 app.geometry("400x250")
 
-# Инициализация выезжающего меню
 sliding_menu = SlidingMenu(app)
 
 main_frame = CTkFrame(master=app)
@@ -257,7 +251,7 @@ label = CTkLabel(master=main_frame, text="Укажите время до сна 
 label.pack()
 
 time_options = [
-    "10 секунд", "30 секунд", "1 минута", "5 минут",
+    "3 секунды", "10 секунд", "30 секунд", "1 минута", "5 минут",
     "10 минут", "15 минут", "30 минут", "1 час",
     "1.5 часа", "2 часа", "3 часа", "4 часа",
     "5 часов", "6 часов", "7 часов", "8 часов"
